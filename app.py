@@ -1,14 +1,18 @@
 """
 00981A ETF 監控 — 雲端版
-報價來源：mis.twse.com.tw（從伺服器端打，無 CORS 限制）
 """
 from flask import Flask, jsonify, send_from_directory, request
-import urllib.request, urllib.parse, json, time, os
+import urllib.request, urllib.parse, json, time, os, ssl
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
 
 app = Flask(__name__, static_folder=STATIC_DIR)
+
+# 忽略 SSL 憑證驗證（mis.twse.com.tw 憑證格式特殊）
+CTX = ssl.create_default_context()
+CTX.check_hostname = False
+CTX.verify_mode = ssl.CERT_NONE
 
 
 @app.route('/api/price')
@@ -18,7 +22,6 @@ def price():
     if not codes:
         return jsonify({'error': 'no codes'}), 400
 
-    # 上市 tse_，上櫃（6開頭4碼）otc_
     parts = []
     for c in codes:
         otc = len(c) == 4 and c.startswith('6')
@@ -37,18 +40,12 @@ def price():
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
-            "Referer":  "https://mis.twse.com.tw/stock/index.jsp",
-            "Accept":   "application/json, text/plain, */*",
+            "Referer":       "https://mis.twse.com.tw/stock/index.jsp",
+            "Accept":        "application/json, text/plain, */*",
             "Accept-Language": "zh-TW,zh;q=0.9",
         })
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=10, context=CTX) as r:
             data = json.loads(r.read())
-
-        # 確認有拿到資料
-        msg = data.get("msgArray", [])
-        if not msg:
-            return jsonify({"error": "empty msgArray", "raw": data}), 502
-
         return jsonify(data)
 
     except Exception as e:
