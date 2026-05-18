@@ -1,7 +1,6 @@
 """
 00981A ETF 監控 — 雲端版
-用 openapi.twse.com.tw 取得收盤價（每日更新，無地區限制）
-盤中用昨收價+試算，或直接顯示最新收盤
+報價來源：openapi.twse.com.tw + tpex.org.tw（無地區限制，每日更新）
 """
 from flask import Flask, jsonify, send_from_directory, request
 import urllib.request, urllib.parse, json, time, os, ssl
@@ -13,45 +12,68 @@ app = Flask(__name__, static_folder=STATIC_DIR)
 
 CTX = ssl.create_default_context()
 CTX.check_hostname = False
-CTX.verify_mode = ssl.CERT_NONE
+CTX.verify_mode    = ssl.CERT_NONE
 
-def fetch_url(url, headers=None):
-    h = {
+def fetch(url):
+    req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json",
-    }
-    if headers:
-        h.update(headers)
-    req = urllib.request.Request(url, headers=h)
+    })
     with urllib.request.urlopen(req, timeout=12, context=CTX) as r:
         return json.loads(r.read())
 
-# ── 方法1：openapi.twse.com.tw 當日收盤（無IP限制）──────────────
-def get_twse_closing():
-    """抓今日上市全部個股收盤價，回傳 {code: {price, prev}} dict"""
-    url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-    data = fetch_url(url)
-    result = {}
-    for row in data:
-        code  = row.get("Code", "")
-        close = float(row.get("ClosingPrice", 0) or 0)
-        open_ = float(row.get("OpeningPrice", 0) or 0)
-        if code and close:
-            result[code] = {"price": close, "prev": open_ or close, "name": row.get("Name", code)}
-    return result
+# ── 快取 ─────────────────────────────────────────────────────────
+_cache = {"tse": {}, "otc": {}, "ts": 0}
 
-# 快取，避免每次都重新抓（每5分鐘更新一次）
-_cache = {"data": {}, "ts": 0}
-
-def get_prices_cached():
+def refresh_cache():
+    """每5分鐘重抓一次上市+上櫃全部股票收盤資料"""
     global _cache
-    if time.time() - _cache["ts"] > 300:  # 5分鐘
-        try:
-            _cache["data"] = get_twse_closing()
-            _cache["ts"]   = time.time()
-        except Exception as e:
-            print(f"更新失敗: {e}")
-    return _cache["data"]
+    now = time.time()
+    if now - _cache["ts"] < 300:
+        return
+
+    # 上市
+    try:
+        rows = fetch("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL")
+        tse = {}
+        for r in rows:
+            code  = str(r.get("Code","")).strip()
+            close = str(r.get("ClosingPrice","")).replace(",","").strip()
+            open_ = str(r.get("OpeningPrice","")).replace(",","").strip()
+            name  = str(r.get("Name","")).strip()
+            if code and close and close != "--":
+                try:
+                    c = float(close)
+                    o = float(open_) if open_ and open_ != "--" else c
+                    tse[code] = {"price": c, "prev": o, "name": name}
+                except:
+                    pass
+        _cache["tse"] = tse
+    except Exception as e:
+        print(f"上市資料失敗: {e}")
+
+    # 上櫃
+    try:
+        rows = fetch("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes")
+        otc = {}
+        for r in rows:
+            code  = str(r.get("SecuritiesCompanyCode","")).strip()
+            close = str(r.get("Close","")).replace(",","").strip()
+            open_ = str(r.get("Open","")).replace(",","").strip()
+            name  = str(r.get("CompanyName","")).strip()
+            if code and close and close != "--":
+                try:
+                    c = float(close)
+                    o = float(open_) if open_ and open_ != "--" else c
+                    otc[code] = {"price": c, "prev": o, "name": name}
+                except:
+                    pass
+        _cache["otc"] = otc
+    except Exception as e:
+        print(f"上櫃資料失敗: {e}")
+
+    _cache["ts"] = now
+    print(f"快取更新：上市 {len(_cache['tse'])} 筆，上櫃 {len(_cache['otc'])} 筆")
 
 
 @app.route('/api/price')
@@ -61,21 +83,36 @@ def price():
     if not codes:
         return jsonify({'error': 'no codes'}), 400
 
-    try:
-        all_prices = get_prices_cached()
-        msg_array = []
-        for c in codes:
-            if c in all_prices:
-                p = all_prices[c]
-                msg_array.append({
-                    "c": c,
-                    "n": p["name"],
-                    "z": str(p["price"]),
-                    "y": str(p["prev"]),
-                })
-        return jsonify({"msgArray": msg_array})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 502
+    refresh_cache()
+
+    msg_array = []
+    for c in codes:
+        # 先找上市，再找上櫃
+        p = _cache["tse"].get(c) or _cache["otc"].get(c)
+        if p:
+            msg_array.append({
+                "c": c,
+                "n": p["name"],
+                "z": str(p["price"]),
+                "y": str(p["prev"]),
+            })
+
+    return jsonify({"msgArray": msg_array})
+
+
+@app.route('/api/debug')
+def debug():
+    """查看快取狀態"""
+    refresh_cache()
+    sample_tse = dict(list(_cache["tse"].items())[:3])
+    sample_otc = dict(list(_cache["otc"].items())[:3])
+    return jsonify({
+        "tse_count": len(_cache["tse"]),
+        "otc_count": len(_cache["otc"]),
+        "sample_tse": sample_tse,
+        "sample_otc": sample_otc,
+        "age_sec": int(time.time() - _cache["ts"]),
+    })
 
 
 @app.route('/api/health')
