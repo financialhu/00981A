@@ -5,7 +5,10 @@
 from flask import Flask, jsonify, send_from_directory, request
 import urllib.request, urllib.parse, json, time, os
 
-app = Flask(__name__, static_folder='static')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, 'static')
+
+app = Flask(__name__, static_folder=STATIC_DIR)
 
 # ── 報價 API（轉發 mis.twse.com.tw）─────────────────────────────
 @app.route('/api/price')
@@ -39,10 +42,10 @@ def price():
 def health():
     return jsonify({'ok': True})
 
-# ── 前端（所有其他路徑都回傳 index.html）────────────────────────
+# ── 前端 ─────────────────────────────────────────────────────────
 @app.route('/')
 def index():
-    return send_from_directory('static', 'index.html')
+    return send_from_directory(STATIC_DIR, 'index.html')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8765))
