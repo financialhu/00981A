@@ -303,7 +303,7 @@ function renderTable(){
     if(sortKey==='chg')  return sortDir*(a.chg-b.chg);
     if(!a.hasP&&b.hasP)  return 1;
     if(a.hasP&&!b.hasP)  return -1;
-    return sortDir*(Math.abs(a.contrib)-Math.abs(b.contrib));
+    return sortDir*(a.contrib-b.contrib);
   });
   const maxW=Math.max(...rows.map(r=>r.weight));
   const maxC=Math.max(...rows.map(r=>Math.abs(r.contrib)))||0.0001;
