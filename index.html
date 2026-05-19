@@ -202,8 +202,6 @@ textarea:focus{border-color:var(--gold)}
 </div>
 
 <script>
-// 雲端版：API 路徑是相對路徑 /api/price（同一台伺服器）
-const API = '';  // 空字串 = 相對路徑，自動對應到 Render 的伺服器
 const SK = '00981A_v3';
 let holdings=[], prices={}, pcfDate='', sortKey='contrib', sortDir=-1, ptimer=null;
 
@@ -251,19 +249,58 @@ function loadSaved(){
   return false;
 }
 
-/* ── 報價（打 /api/price，由 Render 伺服器轉發）── */
+/* ── 報價：瀏覽器直接打，試多個 CORS proxy ── */
+const TWSE_API = 'https://mis.twse.com.tw/stock/api/getStockInfo.jsp';
+
+// 依序嘗試這些 proxy，第一個成功就用那個
+const CORS_PROXIES = [
+  (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
+];
+
+let workingProxy = null;  // 記住哪個 proxy 可以用
+
 async function fetchPrices(){
   if(!holdings.length) return;
-  const codes=holdings.map(h=>h.code).join(',');
-  const r=await fetch(`${API}/api/price?codes=${encodeURIComponent(codes)}`);
-  if(!r.ok) throw new Error(`HTTP ${r.status}`);
-  const data=await r.json();
-  prices={};
-  for(const s of(data.msgArray||[])){
-    const price=parseFloat(s.z)||parseFloat(s.y)||0;
-    const prev=parseFloat(s.y)||0;
-    prices[s.c]={price,prev,chg:prev>0?+((price-prev)/prev*100).toFixed(2):0};
+
+  const parts = holdings.map(h => {
+    const otc = h.code.length===4 && h.code.startsWith('6');
+    return `${otc?'otc':'tse'}_${h.code}.tw`;
+  });
+  const exCh = parts.join('|');
+  const twseUrl = `${TWSE_API}?ex_ch=${encodeURIComponent(exCh)}&json=1&delay=0&_=${Date.now()}`;
+
+  // 如果已知哪個 proxy 可用，直接用
+  const proxiesToTry = workingProxy
+    ? [workingProxy, ...CORS_PROXIES.filter(p=>p!==workingProxy)]
+    : CORS_PROXIES;
+
+  for (const makeUrl of proxiesToTry) {
+    try {
+      const proxyUrl = makeUrl(twseUrl);
+      const r = await fetch(proxyUrl, {signal: AbortSignal.timeout(8000)});
+      if (!r.ok) continue;
+      const data = await r.json();
+      const arr = data.msgArray || [];
+      if (!arr.length) continue;
+
+      // 成功！記住這個 proxy
+      workingProxy = makeUrl;
+      prices = {};
+      for (const s of arr) {
+        const price = parseFloat(s.z) || parseFloat(s.y) || 0;
+        const prev  = parseFloat(s.y) || 0;
+        prices[s.c] = {price, prev, chg: prev>0 ? +((price-prev)/prev*100).toFixed(2) : 0};
+      }
+      return;  // 成功就跳出
+    } catch(e) {
+      continue;  // 這個 proxy 失敗，試下一個
+    }
   }
+  throw new Error('所有 CORS proxy 均無法連線');
+}
+
 }
 
 async function doRefresh(){
