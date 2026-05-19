@@ -1,7 +1,7 @@
 """
 00981A ETF 監控 — 雲端版
-上市：twse.com.tw MI_INDEX（每日盤後更新，無地區限制）
-上櫃：tpex.org.tw openapi
+報價來源：Google Finance（無地區限制）
+台股格式：TSE:2330（上市）、TPE:2330（上櫃）
 """
 from flask import Flask, jsonify, send_from_directory, request
 import urllib.request, urllib.parse, json, time, os, ssl, re
@@ -15,76 +15,72 @@ CTX = ssl.create_default_context()
 CTX.check_hostname = False
 CTX.verify_mode    = ssl.CERT_NONE
 
-def fetch(url):
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json, text/plain, */*",
-    })
-    with urllib.request.urlopen(req, timeout=15, context=CTX) as r:
-        return json.loads(r.read())
+def fetch_google_price(code):
+    """
+    從 Google Finance 頁面抓單一股票現價與昨收。
+    先試上市(TSE)，再試上櫃(TPE)。
+    回傳 {"price": float, "prev": float, "name": str} 或 None
+    """
+    for exchange in ["TSE", "TPE"]:
+        url = f"https://www.google.com/finance/quote/{code}:{exchange}"
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,*/*",
+            })
+            with urllib.request.urlopen(req, timeout=10, context=CTX) as r:
+                html = r.read().decode("utf-8", errors="replace")
 
-_cache = {"tse": {}, "otc": {}, "ts": 0}
+            # 現價：data-last-price 或 class="YMlKec fxKbKc"
+            price = None
+            m = re.search(r'data-last-price="([\d\.]+)"', html)
+            if not m:
+                m = re.search(r'class="YMlKec fxKbKc"[^>]*>([\d,\.]+)', html)
+            if m:
+                price = float(m.group(1).replace(",",""))
 
-def refresh_cache():
-    global _cache
-    if time.time() - _cache["ts"] < 300:
-        return
+            # 昨收：data-prev-close
+            prev = price
+            m2 = re.search(r'data-prev-close="([\d\.]+)"', html)
+            if not m2:
+                # 備用：找「前收盤價」附近數字
+                m2 = re.search(r'(?:前收盤價|Previous close)[^\d]+([\d,\.]+)', html)
+            if m2:
+                prev = float(m2.group(1).replace(",",""))
 
-    # ── 上市：用 twse MI_INDEX（當日全市場行情）────────────────
-    try:
-        today = time.strftime("%Y%m%d")
-        url = (f"https://www.twse.com.tw/exchangeReport/MI_INDEX"
-               f"?response=json&date={today}&type=ALL&_={int(time.time()*1000)}")
-        data = fetch(url)
-        # fields9 = ["證券代號","證券名稱","成交股數",...,"收盤價","漲跌","漲跌價差",...]
-        fields = data.get("fields9", [])
-        rows   = data.get("data9",   [])
-        # 找欄位位置
-        fi_code  = next((i for i,f in enumerate(fields) if "代號" in f), 0)
-        fi_name  = next((i for i,f in enumerate(fields) if "名稱" in f), 1)
-        fi_close = next((i for i,f in enumerate(fields) if "收盤" in f), 8)
-        fi_open  = next((i for i,f in enumerate(fields) if "開盤" in f), 5)
+            # 公司名稱
+            name = code
+            m3 = re.search(r'<title>([^(（<]+)', html)
+            if m3:
+                name = m3.group(1).strip().split(" - ")[0].strip()
 
-        tse = {}
-        for row in rows:
-            code  = str(row[fi_code]).strip()
-            name  = str(row[fi_name]).strip()
-            close = str(row[fi_close]).replace(",","").strip()
-            open_ = str(row[fi_open]).replace(",","").strip()
-            if code and close and close not in ("--",""):
-                try:
-                    c = float(close)
-                    o = float(open_) if open_ not in ("--","") else c
-                    tse[code] = {"price": c, "prev": o, "name": name}
-                except:
-                    pass
-        _cache["tse"] = tse
-        print(f"上市更新：{len(tse)} 筆")
-    except Exception as e:
-        print(f"上市失敗: {e}")
+            if price:
+                return {"price": price, "prev": prev, "name": name, "exchange": exchange}
 
-    # ── 上櫃：tpex openapi ───────────────────────────────────────
-    try:
-        rows = fetch("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes")
-        otc = {}
-        for r in rows:
-            code  = str(r.get("SecuritiesCompanyCode","")).strip()
-            close = str(r.get("Close","")).replace(",","").strip()
-            open_ = str(r.get("Open","")).replace(",","").strip()
-            name  = str(r.get("CompanyName","")).strip()
-            if code and close and close != "--":
-                try:
-                    c = float(close)
-                    o = float(open_) if open_ and open_ != "--" else c
-                    otc[code] = {"price": c, "prev": o, "name": name}
-                except:
-                    pass
-        _cache["otc"] = otc
-        print(f"上櫃更新：{len(otc)} 筆")
-    except Exception as e:
-        print(f"上櫃失敗: {e}")
+        except Exception as e:
+            print(f"  Google {exchange}:{code} 失敗: {e}")
+            continue
 
-    _cache["ts"] = time.time()
+    return None
+
+
+# ── 快取（每支股票個別快取 5 分鐘）─────────────────────────────
+_cache = {}   # { code: {"price", "prev", "name", "ts"} }
+
+def get_price(code):
+    now = time.time()
+    if code in _cache and now - _cache[code]["ts"] < 300:
+        return _cache[code]
+    result = fetch_google_price(code)
+    if result:
+        result["ts"] = now
+        _cache[code] = result
+    return result
 
 
 @app.route('/api/price')
@@ -94,15 +90,13 @@ def price():
     if not codes:
         return jsonify({'error': 'no codes'}), 400
 
-    refresh_cache()
-
     msg_array = []
     for c in codes:
-        p = _cache["tse"].get(c) or _cache["otc"].get(c)
+        p = get_price(c)
         if p:
             msg_array.append({
                 "c": c,
-                "n": p["name"],
+                "n": p.get("name", c),
                 "z": str(p["price"]),
                 "y": str(p["prev"]),
             })
@@ -112,16 +106,10 @@ def price():
 
 @app.route('/api/debug')
 def debug():
-    refresh_cache()
-    # 查幾個常見股票確認有沒有抓到
-    test = {c: _cache["tse"].get(c) or _cache["otc"].get(c)
-            for c in ["2330","2454","2303","6669"]}
-    return jsonify({
-        "tse_count": len(_cache["tse"]),
-        "otc_count": len(_cache["otc"]),
-        "test_stocks": test,
-        "age_sec": int(time.time() - _cache["ts"]),
-    })
+    """測試單一股票"""
+    code = request.args.get('code', '2330')
+    result = fetch_google_price(code)
+    return jsonify({"code": code, "result": result})
 
 
 @app.route('/api/health')
