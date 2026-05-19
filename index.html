@@ -249,58 +249,22 @@ function loadSaved(){
   return false;
 }
 
-/* ── 報價：瀏覽器直接打，試多個 CORS proxy ── */
-const TWSE_API = 'https://mis.twse.com.tw/stock/api/getStockInfo.jsp';
-
-// 依序嘗試這些 proxy，第一個成功就用那個
-const CORS_PROXIES = [
-  (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
-];
-
-let workingProxy = null;  // 記住哪個 proxy 可以用
+/* ── 報價：Google Apps Script 轉發（無地區限制）── */
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzay58cxxq5-MXJxOHVf6nPxLJ94P6VQTId31B98DAPzqL4_6Atg9mk7CbLyRBzGFca/exec';
 
 async function fetchPrices(){
   if(!holdings.length) return;
-
-  const parts = holdings.map(h => {
-    const otc = h.code.length===4 && h.code.startsWith('6');
-    return `${otc?'otc':'tse'}_${h.code}.tw`;
-  });
-  const exCh = parts.join('|');
-  const twseUrl = `${TWSE_API}?ex_ch=${encodeURIComponent(exCh)}&json=1&delay=0&_=${Date.now()}`;
-
-  // 如果已知哪個 proxy 可用，直接用
-  const proxiesToTry = workingProxy
-    ? [workingProxy, ...CORS_PROXIES.filter(p=>p!==workingProxy)]
-    : CORS_PROXIES;
-
-  for (const makeUrl of proxiesToTry) {
-    try {
-      const proxyUrl = makeUrl(twseUrl);
-      const r = await fetch(proxyUrl, {signal: AbortSignal.timeout(8000)});
-      if (!r.ok) continue;
-      const data = await r.json();
-      const arr = data.msgArray || [];
-      if (!arr.length) continue;
-
-      // 成功！記住這個 proxy
-      workingProxy = makeUrl;
-      prices = {};
-      for (const s of arr) {
-        const price = parseFloat(s.z) || parseFloat(s.y) || 0;
-        const prev  = parseFloat(s.y) || 0;
-        prices[s.c] = {price, prev, chg: prev>0 ? +((price-prev)/prev*100).toFixed(2) : 0};
-      }
-      return;  // 成功就跳出
-    } catch(e) {
-      continue;  // 這個 proxy 失敗，試下一個
-    }
+  const codes = holdings.map(h=>h.code).join(',');
+  const url = GAS_URL + '?codes=' + encodeURIComponent(codes);
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('GAS HTTP ' + r.status);
+  const data = await r.json();
+  prices = {};
+  for(const s of (data.msgArray||[])) {
+    const price = parseFloat(s.z) || parseFloat(s.y) || 0;
+    const prev  = parseFloat(s.y) || 0;
+    prices[s.c] = {price, prev, chg: prev>0 ? +((price-prev)/prev*100).toFixed(2) : 0};
   }
-  throw new Error('所有 CORS proxy 均無法連線');
-}
-
 }
 
 async function doRefresh(){
