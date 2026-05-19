@@ -202,8 +202,6 @@ textarea:focus{border-color:var(--gold)}
 </div>
 
 <script>
-// 雲端版：API 路徑是相對路徑 /api/price（同一台伺服器）
-const API = '';  // 空字串 = 相對路徑，自動對應到 Render 的伺服器
 const SK = '00981A_v3';
 let holdings=[], prices={}, pcfDate='', sortKey='contrib', sortDir=-1, ptimer=null;
 
@@ -251,18 +249,21 @@ function loadSaved(){
   return false;
 }
 
-/* ── 報價（打 /api/price，由 Render 伺服器轉發）── */
+/* ── 報價：Google Apps Script 轉發（無地區限制）── */
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzay58cxxq5-MXJxOHVf6nPxLJ94P6VQTId31B98DAPzqL4_6Atg9mk7CbLyRBzGFca/exec';
+
 async function fetchPrices(){
   if(!holdings.length) return;
-  const codes=holdings.map(h=>h.code).join(',');
-  const r=await fetch(`${API}/api/price?codes=${encodeURIComponent(codes)}`);
-  if(!r.ok) throw new Error(`HTTP ${r.status}`);
-  const data=await r.json();
-  prices={};
-  for(const s of(data.msgArray||[])){
-    const price=parseFloat(s.z)||parseFloat(s.y)||0;
-    const prev=parseFloat(s.y)||0;
-    prices[s.c]={price,prev,chg:prev>0?+((price-prev)/prev*100).toFixed(2):0};
+  const codes = holdings.map(h=>h.code).join(',');
+  const url = GAS_URL + '?codes=' + encodeURIComponent(codes);
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('GAS HTTP ' + r.status);
+  const data = await r.json();
+  prices = {};
+  for(const s of (data.msgArray||[])) {
+    const price = parseFloat(s.z) || parseFloat(s.y) || 0;
+    const prev  = parseFloat(s.y) || 0;
+    prices[s.c] = {price, prev, chg: prev>0 ? +((price-prev)/prev*100).toFixed(2) : 0};
   }
 }
 
