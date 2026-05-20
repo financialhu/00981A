@@ -150,6 +150,11 @@ textarea:focus{border-color:var(--gold)}
   <div class="mc"><div class="mc-lbl">最大貢獻</div><div class="mc-val sm" id="m-best">—</div><div class="mc-sub" id="m-bests"></div></div>
   <div class="mc"><div class="mc-lbl">最大拖累</div><div class="mc-val sm" id="m-worst">—</div><div class="mc-sub" id="m-worsts"></div></div>
   <div class="mc"><div class="mc-lbl">報價涵蓋</div><div class="mc-val sm" id="m-cov">—</div><div class="mc-sub">有報價 / 持股總計</div></div>
+  <div class="mc">
+    <div class="mc-lbl">溢折價</div>
+    <div class="mc-val sm" id="m-premium">—</div>
+    <div class="mc-sub" id="m-premium-s">市價 - 預估淨值</div>
+  </div>
 </div>
 
 <div class="toolbar">
@@ -218,6 +223,7 @@ textarea:focus{border-color:var(--gold)}
 
 <script>
 const SK = '00981A_v3';
+const PROXY = '';
 let holdings=[], prices={}, pcfDate='', sortKey='contrib', sortDir=-1, ptimer=null;
 
 const isOpen=()=>{const n=new Date(),d=n.getDay();if(d===0||d===6)return false;const m=n.getHours()*60+n.getMinutes();return m>=540&&m<810};
@@ -265,6 +271,8 @@ function loadSaved(){
 }
 
 /* ── 自動從 Apps Script 抓取最新 PCF ── */
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzay58cxxq5-MXJxOHVf6nPxLJ94P6VQTId31B98DAPzqL4_6Atg9mk7CbLyRBzGFca/exec';
+
 async function fetchPCFFromGAS(){
   const btn=document.getElementById('auto-pcf-btn');
   btn.textContent='⟳ 抓取中...';
@@ -275,7 +283,6 @@ async function fetchPCFFromGAS(){
     const data=await r.json();
     if(data.error) throw new Error(data.error);
     if(!data.holdings||!data.holdings.length) throw new Error('回傳持股為空');
-    
     holdings=data.holdings;
     pcfDate=data.date||new Date().toISOString().slice(0,10);
     try{localStorage.setItem(SK,JSON.stringify({date:pcfDate,holdings}));}catch(e){}
@@ -283,28 +290,26 @@ async function fetchPCFFromGAS(){
     renderTable();
     startPrices();
   }catch(e){
-    showErr('自動抓取失敗：'+e.message+'（可能是今日配額已用盡，請改用手動貼上）');
+    showErr('自動抓取失敗：'+e.message+'（請改用手動貼上）');
   }finally{
     btn.textContent='🔄 自動抓取最新持股';
     btn.disabled=false;
   }
 }
 
-/* ── 報價：Google Apps Script 轉發（無地區限制）── */
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzay58cxxq5-MXJxOHVf6nPxLJ94P6VQTId31B98DAPzqL4_6Atg9mk7CbLyRBzGFca/exec';
-
+/* ── 報價：打 Render /api/price（Yahoo Finance）── */
 async function fetchPrices(){
   if(!holdings.length) return;
-  const codes = holdings.map(h=>h.code).join(',');
-  const url = GAS_URL + '?codes=' + encodeURIComponent(codes);
-  const r = await fetch(url);
-  if(!r.ok) throw new Error('GAS HTTP ' + r.status);
-  const data = await r.json();
-  prices = {};
-  for(const s of (data.msgArray||[])) {
-    const price = parseFloat(s.z) || parseFloat(s.y) || 0;
-    const prev  = parseFloat(s.y) || 0;
-    prices[s.c] = {price, prev, chg: prev>0 ? +((price-prev)/prev*100).toFixed(2) : 0};
+  const holdingCodes=holdings.map(h=>h.code).join(',');
+  const allCodes=holdingCodes+',00981A';
+  const r=await fetch(`${PROXY}/api/price?codes=${encodeURIComponent(allCodes)}`);
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const data=await r.json();
+  prices={};
+  for(const s of(data.msgArray||[])){
+    const price=parseFloat(s.z)||parseFloat(s.y)||0;
+    const prev=parseFloat(s.y)||0;
+    prices[s.c]={price,prev,chg:prev>0?+((price-prev)/prev*100).toFixed(2):0};
   }
 }
 
@@ -331,7 +336,7 @@ function computeRows(){
   return holdings.map(h=>{
     const p=prices[h.code]||{price:0,prev:0,chg:0};
     const hasP=p.price>0;
-    return{...h,...p,hasP,contrib:hasP?(p.chg/100)*(h.weight/100)*100:0};
+    return{...h,...p,hasPrice:hasP,hasP,contrib:hasP?(p.chg/100)*(h.weight/100)*100:0};
   });
 }
 
@@ -423,6 +428,27 @@ function updateMetrics(rows){
   }
   const ce=document.getElementById('m-cov');
   ce.textContent=`${wp.length} / ${rows.length}`;ce.className='mc-val sm'+(wp.length<rows.length?' dn':'');
+
+  // 溢折價：00981A 市價 - 預估淨值
+  const etfP = prices['00981A'];
+  const premEl = document.getElementById('m-premium');
+  const premSub = document.getElementById('m-premium-s');
+  if(etfP && etfP.price>0){
+    const marketPrice = etfP.price;
+    // 預估淨值 = 昨日淨值 * (1 + 今日加權貢獻)
+    // 簡化：用市價 vs 預估淨值差
+    // 以昨收為基準估算淨值
+    const estNav = etfP.prev * (1 + nav/100);
+    const premium = marketPrice - estNav;
+    const premPct = estNav>0 ? (premium/estNav*100) : 0;
+    premEl.textContent = (premium>=0?'+':'')+premium.toFixed(2)+'元';
+    premEl.className = 'mc-val sm '+(premium>0.05?'up':premium<-0.05?'dn':'');
+    premSub.textContent = (premPct>=0?'+':'')+premPct.toFixed(2)+'%　市價 '+marketPrice.toFixed(2);
+  } else {
+    premEl.textContent='—';
+    premEl.className='mc-val sm';
+    premSub.textContent='市價 - 預估淨值';
+  }
 }
 
 function updateStatus(){
