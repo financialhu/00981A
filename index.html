@@ -104,6 +104,14 @@ textarea:focus{border-color:var(--gold)}
 .btn-go:hover{opacity:.88}
 .btn-no{padding:10px 16px;border-radius:5px;cursor:pointer;background:transparent;border:1px solid var(--border2);color:var(--muted);font-family:var(--mono);font-size:12px}
 .perr{font-family:var(--mono);font-size:11px;color:var(--up);padding:0 24px 8px;display:none}
+.upload-zone{margin:0 24px 16px;border:2px dashed var(--border2);border-radius:8px;padding:28px 20px;text-align:center;cursor:pointer;transition:all .2s;position:relative}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--gold);background:rgba(245,200,66,.05)}
+.upload-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.upload-zone .uz-icon{font-size:28px;margin-bottom:8px}
+.upload-zone .uz-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px}
+.upload-zone .uz-sub{font-size:11px;color:var(--muted)}
+.divider{display:flex;align-items:center;gap:12px;padding:0 24px 12px;font-size:11px;color:var(--hint)}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--border)}
 
 .empty{padding:60px 24px;text-align:center;color:var(--muted)}
 .empty .icon{font-size:40px;margin-bottom:14px}
@@ -142,6 +150,11 @@ textarea:focus{border-color:var(--gold)}
   <div class="mc"><div class="mc-lbl">最大貢獻</div><div class="mc-val sm" id="m-best">—</div><div class="mc-sub" id="m-bests"></div></div>
   <div class="mc"><div class="mc-lbl">最大拖累</div><div class="mc-val sm" id="m-worst">—</div><div class="mc-sub" id="m-worsts"></div></div>
   <div class="mc"><div class="mc-lbl">報價涵蓋</div><div class="mc-val sm" id="m-cov">—</div><div class="mc-sub">有報價 / 持股總計</div></div>
+  <div class="mc">
+    <div class="mc-lbl">溢折價</div>
+    <div class="mc-val sm" id="m-premium">—</div>
+    <div class="mc-sub" id="m-premium-s">市價 - 預估淨值</div>
+  </div>
 </div>
 
 <div class="toolbar">
@@ -166,36 +179,43 @@ textarea:focus{border-color:var(--gold)}
 <div class="overlay hidden" id="overlay" onclick="if(event.target===this)closePanel()">
   <div class="panel">
     <div class="panel-head">
-      <h2>📋 設定每日持股明細</h2>
-      <p>每天盤前更新一次，資料存在瀏覽器，下次開啟不用重貼</p>
+      <h2>📋 更新每日持股明細</h2>
+      <p>每天 16:30 後統一投信公告最新 PCF，按一鍵自動抓取</p>
     </div>
-    <div class="steps">
+
+    <div class="steps" style="padding-bottom:8px">
       <div class="step">
-        <div class="step-num">步驟 1 — 開啟 PCF 頁面</div>
-        <p>前往 <a href="https://www.ezmoney.com.tw/ETF/Transaction/PCF" target="_blank">統一投信 PCF 頁面 ↗</a><br>
-        找到 <strong style="color:var(--gold)">00981A 主動統一台股增長</strong>，點進持股明細。</p>
-      </div>
-      <div class="step">
-        <div class="step-num">步驟 2 — 複製表格</div>
-        <p>用滑鼠框選整個持股表格後按 <kbd style="font-family:var(--mono);background:var(--bg);padding:1px 6px;border-radius:3px;border:1px solid var(--border2)">Ctrl+C</kbd>，格式大概長這樣：</p>
-        <div class="example">
-          <span>2330</span>　台積電　<span>8.97%</span>　123,456<br>
-          <span>2454</span>　聯發科　<span>5.12%</span>　78,900<br>
-          <span>2345</span>　智邦　　<span>4.80%</span>　56,000
-        </div>
-      </div>
-      <div class="step">
-        <div class="step-num">步驟 3 — 貼上並套用</div>
-        <p>在下方框框按 <kbd style="font-family:var(--mono);background:var(--bg);padding:1px 6px;border-radius:3px;border:1px solid var(--border2)">Ctrl+V</kbd> 貼上，按「套用持股」。</p>
+        <div class="step-num">🚀 一鍵自動抓取（推薦）</div>
+        <p>直接從統一投信官網抓取今日最新持股，不需要手動操作。</p>
+        <button id="auto-pcf-btn" onclick="fetchPCFFromGAS()" style="margin-top:10px;width:100%;padding:10px;border-radius:5px;cursor:pointer;background:var(--gold);color:var(--bg);font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border:none">🔄 自動抓取最新持股</button>
       </div>
     </div>
+
+    <div class="divider">或手動上傳 / 貼上</div>
+
+    <div class="steps" style="padding:0 0 8px">
+      <div class="step">
+        <div class="step-num">手動備用方式</div>
+        <p>前往 <a href="https://www.ezmoney.com.tw/ETF/Transaction/PCF" target="_blank">統一投信 PCF 頁面 ↗</a>，選 <strong style="color:var(--gold)">00981A</strong>，下載 Excel 或複製表格文字</p>
+      </div>
+    </div>
+
+    <div class="upload-zone" id="upload-zone">
+      <input type="file" id="file-input" accept=".xlsx,.xls" onchange="handleFile(this.files[0])">
+      <div class="uz-icon">📂</div>
+      <div class="uz-title">點擊或拖曳 Excel 檔案到這裡</div>
+      <div class="uz-sub">支援 .xlsx / .xls 格式</div>
+    </div>
+
+    <div class="divider">或手動貼上文字</div>
+
     <div class="paste-area">
-      <label>貼上 PCF 持股明細</label>
-      <textarea id="pinput" placeholder="在此貼上複製的持股資料...&#10;&#10;範例：&#10;2330  台積電  8.97%&#10;2454  聯發科  5.12%"></textarea>
+      <label>手動貼上持股明細（備用）</label>
+      <textarea id="pinput" placeholder="在此貼上複製的持股資料...&#10;&#10;範例：&#10;2330  台積電  8.97%&#10;2454  聯發科  5.12%" style="height:120px"></textarea>
     </div>
     <div class="perr" id="perr"></div>
     <div class="panel-foot">
-      <button class="btn-go" onclick="parsePCF()">✓ 套用持股</button>
+      <button class="btn-go" onclick="parsePCF()">✓ 手動套用</button>
       <button class="btn-no" onclick="closePanel()">取消</button>
     </div>
   </div>
@@ -203,6 +223,7 @@ textarea:focus{border-color:var(--gold)}
 
 <script>
 const SK = '00981A_v3';
+const PROXY = '';
 let holdings=[], prices={}, pcfDate='', sortKey='contrib', sortDir=-1, ptimer=null;
 
 const isOpen=()=>{const n=new Date(),d=n.getDay();if(d===0||d===6)return false;const m=n.getHours()*60+n.getMinutes();return m>=540&&m<810};
@@ -249,21 +270,46 @@ function loadSaved(){
   return false;
 }
 
-/* ── 報價：Google Apps Script 轉發（無地區限制）── */
+/* ── 自動從 Apps Script 抓取最新 PCF ── */
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzay58cxxq5-MXJxOHVf6nPxLJ94P6VQTId31B98DAPzqL4_6Atg9mk7CbLyRBzGFca/exec';
 
+async function fetchPCFFromGAS(){
+  const btn=document.getElementById('auto-pcf-btn');
+  btn.textContent='⟳ 抓取中...';
+  btn.disabled=true;
+  try{
+    const r=await fetch(GAS_URL+'?action=pcf');
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data=await r.json();
+    if(data.error) throw new Error(data.error);
+    if(!data.holdings||!data.holdings.length) throw new Error('回傳持股為空');
+    holdings=data.holdings;
+    pcfDate=data.date||new Date().toISOString().slice(0,10);
+    try{localStorage.setItem(SK,JSON.stringify({date:pcfDate,holdings}));}catch(e){}
+    closePanel();
+    renderTable();
+    startPrices();
+  }catch(e){
+    showErr('自動抓取失敗：'+e.message+'（請改用手動貼上）');
+  }finally{
+    btn.textContent='🔄 自動抓取最新持股';
+    btn.disabled=false;
+  }
+}
+
+/* ── 報價：打 Render /api/price（Yahoo Finance）── */
 async function fetchPrices(){
   if(!holdings.length) return;
-  const codes = holdings.map(h=>h.code).join(',');
-  const url = GAS_URL + '?codes=' + encodeURIComponent(codes);
-  const r = await fetch(url);
-  if(!r.ok) throw new Error('GAS HTTP ' + r.status);
-  const data = await r.json();
-  prices = {};
-  for(const s of (data.msgArray||[])) {
-    const price = parseFloat(s.z) || parseFloat(s.y) || 0;
-    const prev  = parseFloat(s.y) || 0;
-    prices[s.c] = {price, prev, chg: prev>0 ? +((price-prev)/prev*100).toFixed(2) : 0};
+  const holdingCodes=holdings.map(h=>h.code).join(',');
+  const allCodes=holdingCodes+',00981A';
+  const r=await fetch(`${PROXY}/api/price?codes=${encodeURIComponent(allCodes)}`);
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const data=await r.json();
+  prices={};
+  for(const s of(data.msgArray||[])){
+    const price=parseFloat(s.z)||parseFloat(s.y)||0;
+    const prev=parseFloat(s.y)||0;
+    prices[s.c]={price,prev,chg:prev>0?+((price-prev)/prev*100).toFixed(2):0};
   }
 }
 
@@ -290,7 +336,7 @@ function computeRows(){
   return holdings.map(h=>{
     const p=prices[h.code]||{price:0,prev:0,chg:0};
     const hasP=p.price>0;
-    return{...h,...p,hasP,contrib:hasP?(p.chg/100)*(h.weight/100)*100:0};
+    return{...h,...p,hasPrice:hasP,hasP,contrib:hasP?(p.chg/100)*(h.weight/100)*100:0};
   });
 }
 
@@ -303,7 +349,7 @@ function renderTable(){
     if(sortKey==='chg')  return sortDir*(a.chg-b.chg);
     if(!a.hasP&&b.hasP)  return 1;
     if(a.hasP&&!b.hasP)  return -1;
-    return sortDir*(Math.abs(a.contrib)-Math.abs(b.contrib));
+    return sortDir*(a.contrib-b.contrib);
   });
   const maxW=Math.max(...rows.map(r=>r.weight));
   const maxC=Math.max(...rows.map(r=>Math.abs(r.contrib)))||0.0001;
@@ -382,6 +428,27 @@ function updateMetrics(rows){
   }
   const ce=document.getElementById('m-cov');
   ce.textContent=`${wp.length} / ${rows.length}`;ce.className='mc-val sm'+(wp.length<rows.length?' dn':'');
+
+  // 溢折價：00981A 市價 - 預估淨值
+  const etfP = prices['00981A'];
+  const premEl = document.getElementById('m-premium');
+  const premSub = document.getElementById('m-premium-s');
+  if(etfP && etfP.price>0){
+    const marketPrice = etfP.price;
+    // 預估淨值 = 昨日淨值 * (1 + 今日加權貢獻)
+    // 簡化：用市價 vs 預估淨值差
+    // 以昨收為基準估算淨值
+    const estNav = etfP.prev * (1 + nav/100);
+    const premium = marketPrice - estNav;
+    const premPct = estNav>0 ? (premium/estNav*100) : 0;
+    premEl.textContent = (premium>=0?'+':'')+premium.toFixed(2)+'元';
+    premEl.className = 'mc-val sm '+(premium>0.05?'up':premium<-0.05?'dn':'');
+    premSub.textContent = (premPct>=0?'+':'')+premPct.toFixed(2)+'%　市價 '+marketPrice.toFixed(2);
+  } else {
+    premEl.textContent='—';
+    premEl.className='mc-val sm';
+    premSub.textContent='市價 - 預估淨值';
+  }
 }
 
 function updateStatus(){
@@ -398,6 +465,98 @@ function setSort(k){
 
 const openPanel=()=>document.getElementById('overlay').classList.remove('hidden');
 const closePanel=()=>document.getElementById('overlay').classList.add('hidden');
+
+/* ── 拖曳效果 ── */
+const zone = document.getElementById('upload-zone');
+if(zone){
+  zone.addEventListener('dragover', e=>{ e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('dragleave', ()=>zone.classList.remove('drag'));
+  zone.addEventListener('drop', e=>{ e.preventDefault(); zone.classList.remove('drag'); handleFile(e.dataTransfer.files[0]); });
+}
+
+/* ── 讀取 Excel 並解析持股 ── */
+function handleFile(file) {
+  if (!file) return;
+  showErr('');
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['xlsx','xls'].includes(ext)) { showErr('請上傳 .xlsx 或 .xls 檔案'); return; }
+
+  // 動態載入 SheetJS
+  if (typeof XLSX === 'undefined') {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = () => parseExcel(file);
+    document.head.appendChild(s);
+  } else {
+    parseExcel(file);
+  }
+}
+
+function parseExcel(file) {
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb = XLSX.read(e.target.result, {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+
+      const result = [];
+      let date = '';
+
+      for (const row of rows) {
+        // 找日期行
+        const rowStr = row.join(' ');
+        const dm = rowStr.match(/(\d{3,4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+        if (dm && !date) {
+          // 民國年轉西元
+          let y = parseInt(dm[1]);
+          if (y < 1900) y += 1911;
+          date = y + '-' + dm[2].padStart(2,'0') + '-' + dm[3].padStart(2,'0');
+        }
+
+        // 找股票代號欄（4-6位數字）
+        const codeIdx = row.findIndex(c => /^\d{4,6}[A-Za-z]?$/.test(String(c).trim()));
+        if (codeIdx < 0) continue;
+        const code = String(row[codeIdx]).trim();
+
+        // 找名稱（代號後第一個非數字欄）
+        let name = code;
+        for (let i = codeIdx+1; i < row.length; i++) {
+          const v = String(row[i]).trim();
+          if (v && !/^[\d,\.%\+\-]+$/.test(v)) { name = v; break; }
+        }
+
+        // 找比重（含%的欄，或0-100的小數）
+        let weight = 0;
+        for (const c of row) {
+          const v = String(c).trim();
+          if (v.includes('%')) { weight = parseFloat(v.replace(/[%,]/g,'')); break; }
+        }
+        if (!weight) {
+          for (const c of row) {
+            const v = parseFloat(String(c).replace(/,/g,''));
+            if (v > 0 && v < 100 && String(c).includes('.')) { weight = v; break; }
+          }
+        }
+
+        if (code && weight > 0) result.push({code, name, weight, shares: 0});
+      }
+
+      if (!result.length) { showErr('解析失敗，找不到持股資料，請確認是 PCF Excel 檔案'); return; }
+
+      holdings = result;
+      pcfDate = date || new Date().toISOString().slice(0,10);
+      try { localStorage.setItem(SK, JSON.stringify({date:pcfDate, holdings})); } catch(e) {}
+      closePanel();
+      renderTable();
+      startPrices();
+
+    } catch(err) {
+      showErr('Excel 解析錯誤：' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
 
 function tick(){
   document.getElementById('clock').textContent=new Date().toLocaleTimeString('zh-TW',{hour12:false});
